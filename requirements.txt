@@ -1,0 +1,2 @@
+pyfuse3
+-e git+https://github.com/yacchin1205/rdmclient.git@feature/async#egg=osfclient
