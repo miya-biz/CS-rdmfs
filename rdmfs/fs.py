@@ -1,13 +1,17 @@
 from datetime import datetime
+import json
 import os
 import sys
 import stat
 import logging
 import errno
+import time
 import traceback
 import pyfuse3
 import pyfuse3_asyncio
+from cacheout import Cache
 from . import node
+from osfclient.models.file import File
 
 log = logging.getLogger(__name__)
 
@@ -20,6 +24,7 @@ class RDMFileSystem(pyfuse3.Operations):
         self.offset_inode = pyfuse3.ROOT_INODE + 1
         self.path_inodes = {}
         self.file_handlers = {}
+        self.cache = Cache(maxsize=256, ttl=180, timer=time.time, default=None)
 
     async def getattr(self, inode, ctx=None):
         try:
@@ -33,7 +38,7 @@ class RDMFileSystem(pyfuse3.Operations):
                 entry.st_mode = (stat.S_IFREG | 0o644)
                 log.info('getattr: name={}, size={}'.format(store.name, store.size))
                 if store.size is not None:
-                    entry.st_size = store.size
+                    entry.st_size = int(store.size)
                 else:
                     entry.st_size = 0
             stamp = 0
@@ -90,9 +95,23 @@ class RDMFileSystem(pyfuse3.Operations):
         async for file_ in self._get_files(parent):
             if file_.name == path[-1]:
                 log.info('_get_file: name={}'.format(file_.name))
-                return storage, file_
+                return storage, await self._resolve_file(file_)
         log.error('not found: name={}'.format(path[-1]))
         raise pyfuse3.FUSEError(errno.ENOENT)
+
+    async def _resolve_file(self, file_):
+        if not hasattr(file_, '_upload_url'):
+            return file_
+        url = file_._upload_url + '?meta='
+        log.info('_resolve_file: url={}'.format(url))
+        response = file_._json(await file_._get(url), 200)
+        log.info('_resolve_file: json={}'.format(json.dumps(response)))
+        data = response['data']
+        data['links']['self'] = None
+        data['attributes']['materialized_path'] = data['attributes']['materialized']
+        data['attributes']['date_created'] = data['attributes']['created_utc']
+        data['attributes']['date_modified'] = data['attributes']['modified_utc']
+        return File(data, file_.session)
 
     async def _get_files(self, parent):
         if hasattr(parent, 'child_files'):
@@ -132,6 +151,14 @@ class RDMFileSystem(pyfuse3.Operations):
         return self._register_new_inode([storage.name] + path_segments, file_.path)
 
     async def _find_by_inode(self, inode):
+        cached = self.cache.get(inode)
+        if cached is not None:
+            return cached
+        obj = await self._find_by_inode_nocache(inode)
+        self.cache.set(inode, obj)
+        return obj
+
+    async def _find_by_inode_nocache(self, inode):
         if inode == pyfuse3.ROOT_INODE:
             return None, await self._get_osfproject()
         store = await self._find_storage_by_inode(inode)
