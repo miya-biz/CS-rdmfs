@@ -52,7 +52,7 @@ class Project(BaseFileContext):
         return self.osfproject.storages.__aiter__()
 
     def get_inode(self, storage):
-        return self.context._get_storage_inode(storage)
+        return self.context.inodes.get_storage_inode(storage)
 
 class Folder(BaseFileContext):
     def __init__(self, context, storage, folder):
@@ -64,7 +64,7 @@ class Folder(BaseFileContext):
         return self._get_folders_and_files().__aiter__()
 
     def get_inode(self, file):
-        return self.context._get_file_inode(self.storage, file)
+        return self.context.inodes.get_file_inode(self.storage, file)
 
     async def _get_folders_and_files(self):
         if self.storage == self.folder:
