@@ -9,6 +9,7 @@ import time
 import traceback
 import pyfuse3
 import pyfuse3_asyncio
+from osfclient import exceptions as osf_exceptions
 from . import node
 from .inode import Inodes, fromisoformat
 from .filehandle import FileHandlers
@@ -64,7 +65,12 @@ class RDMFileSystem(pyfuse3.Operations):
             if parent_inode == pyfuse3.ROOT_INODE:
                 # Storages
                 osfproject = await self.inodes.get_osfproject()
-                storage = await osfproject.storage(name)
+                storage = None
+                async for s in osfproject.storages:
+                    if s.name == name:
+                        storage = s
+                if storage is None:
+                    raise pyfuse3.FUSEError(errno.ENOENT)
                 inode = self.inodes.get_storage_inode(storage)
                 return await self.getattr(inode)
             # Files
@@ -157,15 +163,45 @@ class RDMFileSystem(pyfuse3.Operations):
             raise pyfuse3.FUSEError(errno.EBADF)
 
     async def release(self, fh):
-        log.info('release')
-        file_ = self.file_handlers.find_node_by_fh(fh)
-        assert file_ is not None
-        await file_.close()
-        self.file_handlers.release_fh(fh)
+        try:
+            log.info('release')
+            file_ = self.file_handlers.find_node_by_fh(fh)
+            assert file_ is not None
+            await file_.close()
+            self.file_handlers.release_fh(fh)
+        except pyfuse3.FUSEError as e:
+            raise e
+        except:
+            traceback.print_exc()
+            raise pyfuse3.FUSEError(errno.EBADF)
 
     async def releasedir(self, fh):
-        log.info('releasedir')
-        file_ = self.file_handlers.find_node_by_fh(fh)
-        assert file_ is not None
-        await file_.close()
-        self.file_handlers.release_fh(fh)
+        try:
+            log.info('releasedir')
+            file_ = self.file_handlers.find_node_by_fh(fh)
+            assert file_ is not None
+            await file_.close()
+            self.file_handlers.release_fh(fh)
+        except pyfuse3.FUSEError as e:
+            raise e
+        except:
+            traceback.print_exc()
+            raise pyfuse3.FUSEError(errno.EBADF)
+
+    async def mkdir(self, parent_inode, name, mode, ctx):
+        try:
+            storage, store = await self.inodes.find_by_inode(parent_inode)
+            if storage is None:
+                # root inode
+                raise pyfuse3.FUSEError(errno.ENOSYS)
+            new_folder = await store.create_folder(name.decode('utf8'))
+            new_attr = await self.lookup(parent_inode, name)
+            log.info('mkdir: folder={}, attr={}'.format(new_folder, new_attr))
+            return new_attr
+        except osf_exceptions.FolderExistsException:
+            raise pyfuse3.FUSEError(errno.EEXIST)
+        except pyfuse3.FUSEError as e:
+            raise e
+        except:
+            traceback.print_exc()
+            raise pyfuse3.FUSEError(errno.EBADF)
