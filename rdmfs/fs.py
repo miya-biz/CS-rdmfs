@@ -205,3 +205,26 @@ class RDMFileSystem(pyfuse3.Operations):
         except:
             traceback.print_exc()
             raise pyfuse3.FUSEError(errno.EBADF)
+
+    async def rmdir(self, parent_inode, name, ctx):
+        try:
+            storage, store = await self.inodes.find_by_inode(parent_inode)
+            if storage is None:
+                # root inode
+                raise pyfuse3.FUSEError(errno.ENOSYS)
+            target = None
+            sname = name.decode('utf8')
+            async for file_ in self.inodes.get_files(store):
+                if file_.name == sname:
+                    target = file_
+            if target is None:
+                raise pyfuse3.FUSEError(errno.ENOENT)
+            async for _ in self.inodes.get_files(target):
+                raise pyfuse3.FUSEError(errno.ENOTEMPTY)
+            log.info('rmdir: folder={}'.format(target))
+            await target.remove()
+        except pyfuse3.FUSEError as e:
+            raise e
+        except:
+            traceback.print_exc()
+            raise pyfuse3.FUSEError(errno.EBADF)
