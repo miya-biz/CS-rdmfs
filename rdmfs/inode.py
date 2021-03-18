@@ -91,7 +91,19 @@ class Inodes:
             async for f in parent.folders:
                 yield f
 
+    def register_temp_inode(self, storage, path, name):
+        path_segments = path.strip('/').split('/')
+        if len(path_segments) == 1 and path_segments[0] == '':
+            path_segments = []
+        newpath = os.path.join(path, name)
+        return self._register_new_inode(
+            [storage.name] + path_segments + [name],
+            newpath
+        )
+
     def _register_new_inode(self, path, file_path):
+        if any([len(p) == 0 for p in path]) > 0:
+            raise ValueError('Contains empty filename: {}'.format(path))
         new_inode = None
         for inode in range(self.offset_inode, sys.maxsize):
             if inode not in self.path_inodes:

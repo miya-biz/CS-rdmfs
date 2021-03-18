@@ -1,28 +1,66 @@
+import io
 import logging
+import os
 import tempfile
 import pyfuse3
+from aiofile import AIOFile, Reader
 
 
 log = logging.getLogger(__name__)
 
 class BaseFileContext:
-    def __init__(self, context):
+    def __init__(self, context, flags=None):
         self.context = context
         self.current_id = None
         self.aiterator = None
         self.buffer = None
+        self.bufferfile = None
+        self.flags = flags
+        self.flush_count = 0
+
+    async def _flush(self, fp):
+        raise NotImplementedError()
+
+    async def _write_to(self, fp):
+        raise NotImplementedError()
+
+    def is_write(self):
+        return self.flags & os.O_RDWR or self.flags & os.O_WRONLY \
+            or self.flags & os.O_APPEND or self.flags & os.O_CREAT
+
+    def is_new_file(self):
+        return False
 
     async def close(self):
-        pass
+        if self.buffer is None and self.is_new_file() and self.is_write():
+            await self._ensure_buffer()
+        await self.flush()
+        self.buffer = None
 
     async def read(self, offset, size):
-        if self.buffer is None:
-            with tempfile.NamedTemporaryFile(delete=False) as f:
-                await self.write_to(f)
-                self.buffer = f.name
-        with open(self.buffer, 'rb') as f:
-            f.seek(offset)
-            return f.read(size)
+        f = await self._ensure_buffer()
+        f.seek(offset)
+        return f.read(size)
+
+    async def write(self, offset, buf):
+        f = await self._ensure_buffer()
+        f.seek(offset)
+        f.write(buf)
+        return len(buf)
+
+    async def flush(self):
+        if self.bufferfile is None:
+            return
+        self.flush_count += 1
+        self.bufferfile.close()
+        self.bufferfile = None
+        if not self.is_write():
+            return
+        async with AIOFile(self.buffer, 'rb') as afp:
+            reader = Reader(afp, chunk_size=4096)
+            #reader.mode = 'rb'
+            #reader.peek = lambda x=None: True
+            await self._flush(reader)
 
     async def readdir(self, start_id, token):
         if self.aiterator is None:
@@ -42,6 +80,27 @@ class BaseFileContext:
         except StopAsyncIteration:
             log.info('Finished')
             return None
+
+    async def _ensure_buffer(self):
+        if self.bufferfile is not None:
+            return self.bufferfile
+        if self.buffer is None:
+            with tempfile.NamedTemporaryFile(delete=False) as f:
+                await self._write_to(f)
+                self.buffer = f.name
+        mode = 'rb'
+        if self.flags is None:
+            pass
+        elif self.flags & os.O_RDWR:
+            mode = 'r+b'
+        elif self.flags & os.O_WRONLY:
+            mode = 'wb'
+        elif self.flags & os.O_APPEND:
+            mode = 'ab'
+        elif self.flags & os.O_CREAT:
+            mode = 'wb'
+        self.bufferfile = open(self.buffer, mode)
+        return self.bufferfile
 
 class Project(BaseFileContext):
     def __init__(self, context, osfproject):
@@ -79,10 +138,28 @@ class Folder(BaseFileContext):
                 yield f
 
 class File(BaseFileContext):
-    def __init__(self, context, storage, file_):
-        super(File, self).__init__(context)
+    def __init__(self, context, storage, file_, flags):
+        super(File, self).__init__(context, flags)
         self.storage = storage
         self.file_ = file_
 
-    async def write_to(self, fp):
+    async def _write_to(self, fp):
         await self.file_.write_to(fp)
+
+    async def _flush(self, fp):
+        await self.file_.update(fp)
+
+class NewFile(BaseFileContext):
+    def __init__(self, context, storage, path, flags):
+        super(NewFile, self).__init__(context, flags)
+        self.storage = storage
+        self.path = path
+
+    def is_new_file(self):
+        return True
+
+    async def _write_to(self, fp):
+        pass
+
+    async def _flush(self, fp):
+        await self.storage.create_file(self.path, fp)

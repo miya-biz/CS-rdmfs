@@ -56,6 +56,19 @@ class RDMFileSystem(pyfuse3.Operations):
             traceback.print_exc()
             raise pyfuse3.FUSEError(errno.EBADF)
 
+    async def setattr(self, inode, attr, fields, fh, ctx=None):
+        try:
+            log.info('setattr: inode={inode}, attr={attr}, fh={fh}'.format(
+                inode=inode, attr=attr, fh=fh
+            ))
+            log.info('not supported')
+            return await self.getattr(inode)
+        except pyfuse3.FUSEError as e:
+            raise e
+        except:
+            traceback.print_exc()
+            raise pyfuse3.FUSEError(errno.EBADF)
+
     async def lookup(self, parent_inode, bname, ctx=None):
         try:
             name = bname.decode('utf8')
@@ -140,10 +153,44 @@ class RDMFileSystem(pyfuse3.Operations):
             log.info('open: inode={inode}'.format(inode=inode))
             if not self.inodes.exists(inode):
                 raise pyfuse3.FUSEError(errno.ENOENT)
-            if flags & os.O_RDWR or flags & os.O_WRONLY:
-                raise pyfuse3.FUSEError(errno.EACCES)
             storage, store = await self.inodes.find_by_inode(inode)
-            return pyfuse3.FileInfo(fh=self.file_handlers.get_node_fh(node.File(self, storage, store)))
+            return pyfuse3.FileInfo(fh=self.file_handlers.get_node_fh(
+                node.File(self, storage, store, flags)
+            ))
+        except pyfuse3.FUSEError as e:
+            raise e
+        except:
+            traceback.print_exc()
+            raise pyfuse3.FUSEError(errno.EBADF)
+
+    async def create(self, parent_inode, name, mode, flags, ctx):
+        try:
+            sname = name.decode('utf8')
+            log.info('create: parent_inode={inode} name={sname}'.format(
+                inode=parent_inode, sname=sname
+            ))
+            storage, store = await self.inodes.find_by_inode(parent_inode)
+            log.info('create: parent_path={}'.format(store.path))
+            newpath = os.path.join(store.path.lstrip('/'), sname)
+
+            entry = pyfuse3.EntryAttributes()
+            entry.st_mode = (stat.S_IFREG | 0o644)
+            entry.st_size = 0
+            stamp = int(datetime.now().timestamp() * 1e9)
+            mstamp = stamp
+            entry.st_atime_ns = stamp
+            entry.st_ctime_ns = stamp
+            entry.st_mtime_ns = stamp
+            entry.st_gid = os.getgid()
+            entry.st_uid = os.getuid()
+            entry.st_ino = self.inodes.register_temp_inode(storage, store.path, sname)
+
+            return (
+                pyfuse3.FileInfo(fh=self.file_handlers.get_node_fh(
+                    node.NewFile(self, storage, newpath, flags)
+                )),
+                entry
+            )
         except pyfuse3.FUSEError as e:
             raise e
         except:
@@ -156,6 +203,30 @@ class RDMFileSystem(pyfuse3.Operations):
             file_ = self.file_handlers.find_node_by_fh(fh)
             assert file_ is not None
             return await file_.read(off, size)
+        except pyfuse3.FUSEError as e:
+            raise e
+        except:
+            traceback.print_exc()
+            raise pyfuse3.FUSEError(errno.EBADF)
+
+    async def write(self, fh, off, buf):
+        try:
+            log.info('write: fh={fh}'.format(fh=fh))
+            file_ = self.file_handlers.find_node_by_fh(fh)
+            assert file_ is not None
+            return await file_.write(off, buf)
+        except pyfuse3.FUSEError as e:
+            raise e
+        except:
+            traceback.print_exc()
+            raise pyfuse3.FUSEError(errno.EBADF)
+
+    async def flush(self, fh):
+        try:
+            log.info('flush: fh={fh}'.format(fh=fh))
+            file_ = self.file_handlers.find_node_by_fh(fh)
+            assert file_ is not None
+            await file_.flush()
         except pyfuse3.FUSEError as e:
             raise e
         except:
