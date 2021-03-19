@@ -24,6 +24,9 @@ class BaseFileContext:
     async def _write_to(self, fp):
         raise NotImplementedError()
 
+    async def _invalidate(self):
+        pass
+
     def is_write(self):
         return self.flags & os.O_RDWR or self.flags & os.O_WRONLY \
             or self.flags & os.O_APPEND or self.flags & os.O_CREAT
@@ -36,6 +39,7 @@ class BaseFileContext:
             await self._ensure_buffer()
         await self.flush()
         self.buffer = None
+        await self._invalidate()
 
     async def read(self, offset, size):
         f = await self._ensure_buffer()
@@ -61,6 +65,7 @@ class BaseFileContext:
             #reader.mode = 'rb'
             #reader.peek = lambda x=None: True
             await self._flush(reader)
+        os.remove(self.buffer)
 
     async def readdir(self, start_id, token):
         if self.aiterator is None:
@@ -91,14 +96,17 @@ class BaseFileContext:
         mode = 'rb'
         if self.flags is None:
             pass
+        elif self.flags & os.O_RDWR and self.flags & os.O_APPEND:
+            mode = 'a+b'
         elif self.flags & os.O_RDWR:
             mode = 'r+b'
+        elif self.flags & os.O_WRONLY and self.flags & os.O_APPEND:
+            mode = 'ab'
         elif self.flags & os.O_WRONLY:
             mode = 'wb'
-        elif self.flags & os.O_APPEND:
-            mode = 'ab'
-        elif self.flags & os.O_CREAT:
-            mode = 'wb'
+        log.info('buffer: file={2}, flags={0:08x}, mode={1}'.format(
+            self.flags, mode, self.buffer
+        ))
         self.bufferfile = open(self.buffer, mode)
         return self.bufferfile
 
@@ -149,6 +157,9 @@ class File(BaseFileContext):
     async def _flush(self, fp):
         await self.file_.update(fp)
 
+    async def _invalidate(self):
+        self.context.inodes.clear_inode_cache(self.storage, self.file_.path)
+
 class NewFile(BaseFileContext):
     def __init__(self, context, storage, path, flags):
         super(NewFile, self).__init__(context, flags)
@@ -163,3 +174,6 @@ class NewFile(BaseFileContext):
 
     async def _flush(self, fp):
         await self.storage.create_file(self.path, fp)
+
+    async def _invalidate(self):
+        self.context.inodes.clear_inode_cache(self.storage, self.path)

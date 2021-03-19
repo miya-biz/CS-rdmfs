@@ -150,7 +150,7 @@ class RDMFileSystem(pyfuse3.Operations):
 
     async def open(self, inode, flags, ctx):
         try:
-            log.info('open: inode={inode}'.format(inode=inode))
+            log.info('open: inode={inode}, flags={flags}'.format(inode=inode, flags=flags))
             if not self.inodes.exists(inode):
                 raise pyfuse3.FUSEError(errno.ENOENT)
             storage, store = await self.inodes.find_by_inode(inode)
@@ -199,7 +199,9 @@ class RDMFileSystem(pyfuse3.Operations):
 
     async def read(self, fh, off, size):
         try:
-            log.info('read: fh={fh}'.format(fh=fh))
+            log.info('read: fh={fh}, off={off}, size={size}'.format(
+                fh=fh, off=off, size=size
+            ))
             file_ = self.file_handlers.find_node_by_fh(fh)
             assert file_ is not None
             return await file_.read(off, size)
@@ -211,7 +213,7 @@ class RDMFileSystem(pyfuse3.Operations):
 
     async def write(self, fh, off, buf):
         try:
-            log.info('write: fh={fh}'.format(fh=fh))
+            log.info('write: fh={fh}, off={off}'.format(fh=fh, off=off))
             file_ = self.file_handlers.find_node_by_fh(fh)
             assert file_ is not None
             return await file_.write(off, buf)
@@ -290,10 +292,72 @@ class RDMFileSystem(pyfuse3.Operations):
                     target = file_
             if target is None:
                 raise pyfuse3.FUSEError(errno.ENOENT)
+            if not hasattr(target, 'files'):
+                log.info('attempt to rmdir file: {}'.format(target))
+                raise pyfuse3.FUSEError(errno.ENOTDIR)
             async for _ in self.inodes.get_files(target):
                 raise pyfuse3.FUSEError(errno.ENOTEMPTY)
             log.info('rmdir: folder={}'.format(target))
             await target.remove()
+            self.inodes.invalidate_inode(storage, target.path)
+        except pyfuse3.FUSEError as e:
+            raise e
+        except:
+            traceback.print_exc()
+            raise pyfuse3.FUSEError(errno.EBADF)
+
+    async def rename(self, parent_inode_old, name_old, parent_inode_new, name_new, flags, ctx):
+        try:
+            storage_old, store_old = await self.inodes.find_by_inode(parent_inode_old)
+            if storage_old is None:
+                # root inode
+                raise pyfuse3.FUSEError(errno.ENOSYS)
+            storage_new, store_new = await self.inodes.find_by_inode(parent_inode_new)
+            if storage_new is None:
+                # root inode
+                raise pyfuse3.FUSEError(errno.ENOSYS)
+            target_old = None
+            sname_old = name_old.decode('utf8')
+            async for file_ in self.inodes.get_files(store_old):
+                if file_.name == sname_old:
+                    target_old = file_
+            if target_old is None:
+                raise pyfuse3.FUSEError(errno.ENOENT)
+            sname_new = name_new.decode('utf8')
+            if sname_old != sname_new:
+                if hasattr(target_old, 'files'):
+                    await target_old.move_to(storage_new, store_new, to_foldername=sname_new)
+                else:
+                    await target_old.move_to(storage_new, store_new, to_filename=sname_new)
+            else:
+                await target_old.move_to(storage_new, store_new)
+            log.info('move: src={}, dest={}, destname={}'.format(
+                target_old, store_new, sname_new
+            ))
+            self.inodes.invalidate_inode(storage_old, target_old.path)
+            self.inodes.invalidate_inode(storage_new, os.path.join(store_new.path, sname_new))
+        except pyfuse3.FUSEError as e:
+            raise e
+        except:
+            traceback.print_exc()
+            raise pyfuse3.FUSEError(errno.EBADF)
+
+    async def unlink(self, parent_inode, name, ctx):
+        try:
+            storage, store = await self.inodes.find_by_inode(parent_inode)
+            if storage is None:
+                # root inode
+                raise pyfuse3.FUSEError(errno.ENOSYS)
+            target = None
+            sname = name.decode('utf8')
+            async for file_ in self.inodes.get_files(store):
+                if file_.name == sname:
+                    target = file_
+            if target is None:
+                raise pyfuse3.FUSEError(errno.ENOENT)
+            log.info('unlink: file={}'.format(target))
+            await target.remove()
+            self.inodes.invalidate_inode(storage, target.path)
         except pyfuse3.FUSEError as e:
             raise e
         except:

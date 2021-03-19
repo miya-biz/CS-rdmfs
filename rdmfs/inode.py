@@ -96,10 +96,35 @@ class Inodes:
         if len(path_segments) == 1 and path_segments[0] == '':
             path_segments = []
         newpath = os.path.join(path, name)
+        for inode, (path, file_path) in self.path_inodes.items():
+            if len(path) > 1 and path[0] == storage.name and file_path == newpath:
+                return inode
         return self._register_new_inode(
             [storage.name] + path_segments + [name],
             newpath
         )
+
+    def invalidate_inode(self, storage, target_path):
+        target = self._find_inode_by_path(storage, target_path)
+        if target is None:
+            log.info('Already invalidated: {}, {}'.format(storage.name, target_path))
+            return
+        self.cache.delete(target)
+        del self.path_inodes[target]
+
+    def clear_inode_cache(self, storage, target_path):
+        target = self._find_inode_by_path(storage, target_path)
+        if target is None:
+            log.info('Not found: {}, {}'.format(storage.name, target_path))
+            return
+        log.info('Clear cache: inode={}'.format(target))
+        self.cache.delete(target)
+
+    def _find_inode_by_path(self, storage, target_path):
+        for inode, (path, file_path) in self.path_inodes.items():
+            if len(path) > 1 and path[0] == storage.name and file_path == target_path:
+                return inode
+        return None
 
     def _register_new_inode(self, path, file_path):
         if any([len(p) == 0 for p in path]) > 0:
