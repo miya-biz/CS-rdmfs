@@ -6,3 +6,7 @@ RUN apt-get update \
 COPY . /tmp/
 RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
 RUN pip3 install /tmp/
+
+RUN cp /tmp/bin/start.sh / && chmod +x /start.sh
+
+CMD /start.sh
