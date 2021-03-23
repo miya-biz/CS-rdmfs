@@ -33,6 +33,8 @@ def parse_args():
                         help='Where to mount the file system')
     parser.add_argument('--debug', action='store_true', default=False,
                         help='Enable debugging output')
+    parser.add_argument('--allow-other', action='store_true', default=False,
+                        help='Enable allow_other option')
     parser.add_argument('--debug-fuse', action='store_true', default=False,
                         help='Enable FUSE debugging output')
     parser.add_argument('-u', '--username', default=None,
@@ -52,6 +54,8 @@ def main():
     osf = cli._setup_osf(options)
     rdmfs = fs.RDMFileSystem(osf, options.project)
     fuse_options = set(pyfuse3.default_options)
+    if options.allow_other:
+        fuse_options.add('allow_other')
     fuse_options.add('fsname=rdmfs_asyncio')
     if options.debug_fuse:
         fuse_options.add('debug')
