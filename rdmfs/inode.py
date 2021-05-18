@@ -66,6 +66,8 @@ class Inodes:
         raise pyfuse3.FUSEError(errno.ENOENT)
 
     async def _resolve_file(self, file_):
+        if hasattr(file_, 'size') and file_.size is not None and type(file_.size) == int:
+            return file_
         if not hasattr(file_, '_upload_url'):
             return file_
         url = file_._upload_url + '?meta='
