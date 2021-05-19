@@ -17,10 +17,14 @@ from .filehandle import FileHandlers
 log = logging.getLogger(__name__)
 
 class RDMFileSystem(pyfuse3.Operations):
-    def __init__(self, osf, project):
+    def __init__(self, osf, project, dir_mode=0o755, file_mode=0o644, uid=None, gid=None):
         super(RDMFileSystem, self).__init__()
         self.inodes = Inodes(osf, project)
         self.file_handlers = FileHandlers()
+        self.dir_mode = dir_mode
+        self.file_mode = file_mode
+        self.uid = uid or os.getuid()
+        self.gid = gid or os.getgid()
 
     async def getattr(self, inode, ctx=None):
         try:
@@ -28,10 +32,10 @@ class RDMFileSystem(pyfuse3.Operations):
             entry = pyfuse3.EntryAttributes()
             storage, store = await self.inodes.find_by_inode(inode)
             if hasattr(store, 'files') or hasattr(store, 'storages'):
-                entry.st_mode = (stat.S_IFDIR | 0o755)
+                entry.st_mode = (stat.S_IFDIR | self.dir_mode)
                 entry.st_size = 0
             else:
-                entry.st_mode = (stat.S_IFREG | 0o644)
+                entry.st_mode = (stat.S_IFREG | self.file_mode)
                 log.info('getattr: name={}, size={}'.format(store.name, store.size))
                 if store.size is not None:
                     entry.st_size = int(store.size)
@@ -46,8 +50,8 @@ class RDMFileSystem(pyfuse3.Operations):
             entry.st_atime_ns = stamp
             entry.st_ctime_ns = stamp
             entry.st_mtime_ns = stamp
-            entry.st_gid = os.getgid()
-            entry.st_uid = os.getuid()
+            entry.st_gid = self.gid
+            entry.st_uid = self.uid
             entry.st_ino = inode
             return entry
         except pyfuse3.FUSEError as e:
