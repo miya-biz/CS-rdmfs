@@ -8,6 +8,13 @@ from aiofile import AIOFile, Reader
 
 log = logging.getLogger(__name__)
 
+def flags_can_write(flags):
+    if flags & 0x03 == os.O_RDWR:
+        return True
+    if flags & 0x03 == os.O_WRONLY:
+        return True
+    return False
+
 class BaseFileContext:
     def __init__(self, context, flags=None):
         self.context = context
@@ -28,8 +35,7 @@ class BaseFileContext:
         pass
 
     def is_write(self):
-        return self.flags & os.O_RDWR or self.flags & os.O_WRONLY \
-            or self.flags & os.O_APPEND or self.flags & os.O_CREAT
+        return flags_can_write(self.flags)
 
     def is_new_file(self):
         return False
@@ -96,13 +102,13 @@ class BaseFileContext:
         mode = 'rb'
         if self.flags is None:
             pass
-        elif self.flags & os.O_RDWR and self.flags & os.O_APPEND:
+        elif self.flags & 0x03 == os.O_RDWR and self.flags & os.O_APPEND:
             mode = 'a+b'
-        elif self.flags & os.O_RDWR:
+        elif self.flags & 0x03 == os.O_RDWR:
             mode = 'r+b'
-        elif self.flags & os.O_WRONLY and self.flags & os.O_APPEND:
+        elif self.flags & 0x03 == os.O_WRONLY and self.flags & os.O_APPEND:
             mode = 'ab'
-        elif self.flags & os.O_WRONLY:
+        elif self.flags & 0x03 == os.O_WRONLY:
             mode = 'wb'
         log.info('buffer: file={2}, flags={0:08x}, mode={1}'.format(
             self.flags, mode, self.buffer

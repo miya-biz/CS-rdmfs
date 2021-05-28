@@ -6,7 +6,7 @@ import pwd
 import re
 import pyfuse3
 import pyfuse3_asyncio
-from rdmfs import fs
+from rdmfs import fs, whitelist
 from osfclient import cli
 
 
@@ -55,6 +55,8 @@ def parse_args():
                         help='Owner(name or uid) of files. default: uid of current user')
     parser.add_argument('--group', default=None,
                         help='Group(name or gid) of files. default: gid of current user')
+    parser.add_argument('--writable-whitelist', default=None,
+                        help='Whitelist of writable files')
     return parser.parse_args()
 
 def parse_mode(mode):
@@ -88,9 +90,14 @@ def main():
     dir_mode = parse_mode(options.dir_mode)
     uid = parse_uid(options.owner)
     gid = parse_gid(options.group)
+    writable_whitelist = None
+    if options.writable_whitelist is not None:
+        with open(options.writable_whitelist, 'r') as f:
+            writable_whitelist = whitelist.Whitelist(f)
     rdmfs = fs.RDMFileSystem(osf, options.project,
                              file_mode=file_mode, dir_mode=dir_mode,
-                             uid=uid, gid=gid)
+                             uid=uid, gid=gid,
+                             writable_whitelist=writable_whitelist)
     fuse_options = set(pyfuse3.default_options)
     if options.allow_other:
         fuse_options.add('allow_other')

@@ -17,7 +17,8 @@ from .filehandle import FileHandlers
 log = logging.getLogger(__name__)
 
 class RDMFileSystem(pyfuse3.Operations):
-    def __init__(self, osf, project, dir_mode=0o755, file_mode=0o644, uid=None, gid=None):
+    def __init__(self, osf, project, dir_mode=0o755, file_mode=0o644,
+                 uid=None, gid=None, writable_whitelist=None):
         super(RDMFileSystem, self).__init__()
         self.inodes = Inodes(osf, project)
         self.file_handlers = FileHandlers()
@@ -25,6 +26,7 @@ class RDMFileSystem(pyfuse3.Operations):
         self.file_mode = file_mode
         self.uid = uid or os.getuid()
         self.gid = gid or os.getgid()
+        self.writable_whitelist = writable_whitelist
 
     async def getattr(self, inode, ctx=None):
         try:
@@ -41,6 +43,9 @@ class RDMFileSystem(pyfuse3.Operations):
                     entry.st_size = int(store.size)
                 else:
                     entry.st_size = 0
+            if self.writable_whitelist is not None and \
+                not self.writable_whitelist.includes(storage, store):
+                entry.st_mode = entry.st_mode & (~0o200)
             stamp = 0
             mstamp = stamp
             if hasattr(store, 'date_created') and store.date_created is not None:
@@ -158,6 +163,11 @@ class RDMFileSystem(pyfuse3.Operations):
             if not self.inodes.exists(inode):
                 raise pyfuse3.FUSEError(errno.ENOENT)
             storage, store = await self.inodes.find_by_inode(inode)
+            if node.flags_can_write(flags) and \
+                self.writable_whitelist is not None and \
+                not self.writable_whitelist.includes(storage, store):
+                raise pyfuse3.FUSEError(errno.EACCES)
+
             return pyfuse3.FileInfo(fh=self.file_handlers.get_node_fh(
                 node.File(self, storage, store, flags)
             ))
@@ -175,6 +185,10 @@ class RDMFileSystem(pyfuse3.Operations):
             ))
             storage, store = await self.inodes.find_by_inode(parent_inode)
             log.info('create: parent_path={}'.format(store.path))
+            if self.writable_whitelist is not None and \
+                not self.writable_whitelist.includes(storage, store, sname):
+                raise pyfuse3.FUSEError(errno.EACCES)
+
             newpath = os.path.join(store.path.lstrip('/'), sname)
 
             entry = pyfuse3.EntryAttributes()
@@ -271,7 +285,11 @@ class RDMFileSystem(pyfuse3.Operations):
             if storage is None:
                 # root inode
                 raise pyfuse3.FUSEError(errno.ENOSYS)
-            new_folder = await store.create_folder(name.decode('utf8'))
+            sname = name.decode('utf8')
+            if self.writable_whitelist is not None and \
+                not self.writable_whitelist.includes(storage, store, sname + '/'):
+                raise pyfuse3.FUSEError(errno.EACCES)
+            new_folder = await store.create_folder(sname)
             new_attr = await self.lookup(parent_inode, name)
             log.info('mkdir: folder={}, attr={}'.format(new_folder, new_attr))
             return new_attr
@@ -291,6 +309,9 @@ class RDMFileSystem(pyfuse3.Operations):
                 raise pyfuse3.FUSEError(errno.ENOSYS)
             target = None
             sname = name.decode('utf8')
+            if self.writable_whitelist is not None and \
+                not self.writable_whitelist.includes(storage, store, sname + '/'):
+                raise pyfuse3.FUSEError(errno.EACCES)
             async for file_ in self.inodes.get_files(store):
                 if file_.name == sname:
                     target = file_
@@ -328,6 +349,12 @@ class RDMFileSystem(pyfuse3.Operations):
             if target_old is None:
                 raise pyfuse3.FUSEError(errno.ENOENT)
             sname_new = name_new.decode('utf8')
+            if self.writable_whitelist is not None and \
+                not self.writable_whitelist.includes(storage_old, store_old, sname_old):
+                raise pyfuse3.FUSEError(errno.EACCES)
+            if self.writable_whitelist is not None and \
+                not self.writable_whitelist.includes(storage_new, store_new, sname_new):
+                raise pyfuse3.FUSEError(errno.EACCES)
             if sname_old != sname_new:
                 if hasattr(target_old, 'files'):
                     await target_old.move_to(storage_new, store_new, to_foldername=sname_new)
@@ -354,6 +381,9 @@ class RDMFileSystem(pyfuse3.Operations):
                 raise pyfuse3.FUSEError(errno.ENOSYS)
             target = None
             sname = name.decode('utf8')
+            if self.writable_whitelist is not None and \
+                not self.writable_whitelist.includes(storage, store, sname):
+                raise pyfuse3.FUSEError(errno.EACCES)
             async for file_ in self.inodes.get_files(store):
                 if file_.name == sname:
                     target = file_
