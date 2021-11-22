@@ -1,4 +1,4 @@
 pyfuse3
--e git+https://github.com/yacchin1205/rdmclient.git@fix/asyncio-file#egg=osfclient
+-e git+https://github.com/yacchin1205/rdmclient.git@fix/asyncio-file-redirects#egg=osfclient
 cacheout
 aiofile
