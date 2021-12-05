@@ -32,7 +32,8 @@ class RDMFileSystem(pyfuse3.Operations):
         try:
             log.info('getattr: inode={inode}'.format(inode=inode))
             entry = pyfuse3.EntryAttributes()
-            storage, store = await self.inodes.find_by_inode(inode)
+            storage, store = await self.inodes.find_by_inode(inode, allow_dummy=True)
+            await self._validate_store(storage, store)
             if hasattr(store, 'files') or hasattr(store, 'storages'):
                 entry.st_mode = (stat.S_IFDIR | self.dir_mode)
                 entry.st_size = 0
@@ -58,6 +59,8 @@ class RDMFileSystem(pyfuse3.Operations):
             entry.st_gid = self.gid
             entry.st_uid = self.uid
             entry.st_ino = inode
+            entry.entry_timeout = 5
+            entry.attr_timeout = 5
             return entry
         except pyfuse3.FUSEError as e:
             raise e
@@ -123,6 +126,7 @@ class RDMFileSystem(pyfuse3.Operations):
                 return self.file_handlers.get_node_fh(node.Project(self, osfproject))
             if self.inodes.exists(inode):
                 storage, store = await self.inodes.find_by_inode(inode)
+                await self._validate_store(storage, store)
                 log.info('find_by_inode: storage={}, folder={}'.format(storage, store))
                 return self.file_handlers.get_node_fh(node.Folder(self, storage, store))
             raise pyfuse3.FUSEError(errno.ENOENT)
@@ -163,6 +167,7 @@ class RDMFileSystem(pyfuse3.Operations):
             if not self.inodes.exists(inode):
                 raise pyfuse3.FUSEError(errno.ENOENT)
             storage, store = await self.inodes.find_by_inode(inode)
+            await self._validate_store(storage, store)
             if node.flags_can_write(flags) and \
                 self.writable_whitelist is not None and \
                 not self.writable_whitelist.includes(storage, store):
@@ -202,6 +207,8 @@ class RDMFileSystem(pyfuse3.Operations):
             entry.st_gid = os.getgid()
             entry.st_uid = os.getuid()
             entry.st_ino = self.inodes.register_temp_inode(storage, store.path, sname)
+            entry.entry_timeout = 5
+            entry.attr_timeout = 5
 
             return (
                 pyfuse3.FileInfo(fh=self.file_handlers.get_node_fh(
@@ -397,3 +404,6 @@ class RDMFileSystem(pyfuse3.Operations):
         except:
             traceback.print_exc()
             raise pyfuse3.FUSEError(errno.EBADF)
+
+    async def _validate_store(self, storage, store):
+        pass

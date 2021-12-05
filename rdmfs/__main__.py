@@ -13,7 +13,7 @@ from osfclient import cli
 pyfuse3_asyncio.enable()
 
 def init_logging(debug=False):
-    formatter = logging.Formatter('%(asctime)s.%(msecs)03d %(threadName)s: '
+    formatter = logging.Formatter('%(asctime)s.%(msecs)03d %(levelname)s %(threadName)s: '
                                   '[%(name)s] %(message)s', datefmt="%Y-%m-%d %H:%M:%S")
     handler = logging.StreamHandler()
     handler.setFormatter(formatter)
