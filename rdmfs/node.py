@@ -182,4 +182,4 @@ class NewFile(BaseFileContext):
         await self.storage.create_file(self.path, fp)
 
     async def _invalidate(self):
-        self.context.inodes.clear_inode_cache(self.storage, self.path)
+        self.context.inodes.clear_inode_cache(self.storage, '/' + self.path)
