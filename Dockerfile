@@ -1,4 +1,4 @@
-FROM python:3.8-buster
+FROM python:3.11-buster
 
 RUN apt-get update \
     && apt-get install -y fuse3 libfuse3-dev pkg-config git xattr \

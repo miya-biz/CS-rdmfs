@@ -88,16 +88,8 @@ class Inodes:
         return File(data, file_.session)
 
     async def get_files(self, parent):
-        if hasattr(parent, 'child_files'):
-            async for f in parent.child_files:
-                yield f
-            async for f in parent.child_folders:
-                yield f
-        else:
-            async for f in parent.files:
-                yield f
-            async for f in parent.folders:
-                yield f
+        async for f in parent.children:
+            yield f
 
     def register_temp_inode(self, storage, path, name):
         log.debug(f'register_temp_inode: begin path={path}, name={name}')

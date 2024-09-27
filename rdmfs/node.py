@@ -4,6 +4,7 @@ import os
 import tempfile
 import pyfuse3
 from aiofile import AIOFile, Reader
+import aiofiles
 
 
 log = logging.getLogger(__name__)
@@ -96,7 +97,7 @@ class BaseFileContext:
         if self.bufferfile is not None:
             return self.bufferfile
         if self.buffer is None:
-            with tempfile.NamedTemporaryFile(delete=False) as f:
+            async with aiofiles.tempfile.NamedTemporaryFile(delete=False) as f:
                 await self._write_to(f)
                 self.buffer = f.name
         mode = 'rb'
@@ -140,16 +141,8 @@ class Folder(BaseFileContext):
         return self.context.inodes.get_file_inode(self.storage, file)
 
     async def _get_folders_and_files(self):
-        if self.storage == self.folder:
-            async for f in self.storage.child_folders:
-                yield f
-            async for f in self.storage.child_files:
-                yield f
-        else:
-            async for f in self.folder.folders:
-                yield f
-            async for f in self.folder.files:
-                yield f
+        async for f in self.folder.children:
+            yield f
 
 class File(BaseFileContext):
     def __init__(self, context, storage, file_, flags):
