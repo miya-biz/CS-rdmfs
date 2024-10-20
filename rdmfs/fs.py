@@ -347,7 +347,7 @@ class RDMFileSystem(pyfuse3.Operations):
             log.info('move: src={}, dest={}, destname={}'.format(
                 target_old, store_new, sname_new
             ))
-            self.inodes.invalidate(target_old)
+            self.inodes.invalidate(target_old, name=sname_new)
             self.inodes.invalidate(parent_inode_old)
             self.inodes.invalidate(parent_inode_new)
         except pyfuse3.FUSEError as e:

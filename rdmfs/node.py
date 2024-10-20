@@ -108,7 +108,7 @@ class FileContext:
                 await self.context.getattr(child_inode.id),
                 self.current_id)
         except StopAsyncIteration:
-            log.info('Finished')
+            log.info('Finished, inode={}'.format(self.inode))
             return None
 
     async def _ensure_buffer(self):

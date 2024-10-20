@@ -4,7 +4,7 @@ import sys
 import logging
 import errno
 import time
-from typing import Optional, Union, List, Dict, AsyncGenerator
+from typing import Optional, Union, List, Dict, AsyncGenerator, Any
 
 import pyfuse3
 from cacheout import Cache
@@ -41,7 +41,7 @@ class BaseInode:
     async def refresh(self, context: 'Inodes', force=False):
         log.debug(f'nothing to refresh: inode={self.id}')
 
-    def invalidate(self):
+    def invalidate(self, name: Optional[str] = None):
         pass
 
     @property
@@ -153,12 +153,39 @@ class StorageInode(BaseInode):
         return f'{self.parent.display_path}{self._storage.name}/'
 
 
-class FolderInode(BaseInode):
-    """The class for managing single folder inode."""
-    def __init__(self, id: int, parent: BaseInode, folder: Folder):
-        super(FolderInode, self).__init__(id)
+class BaseFileInode(BaseInode):
+    """The class for managing single file inode."""
+    _updated: Optional[Union[File, Folder]]
+    _last_loaded: float
+    _updated_name: Optional[str]
+
+    def __init__(
+        self,
+        id: int,
+        parent: BaseInode,
+    ):
+        super(BaseFileInode, self).__init__(id)
         self._parent = parent
-        self.folder = folder
+        self._updated = None
+        self._last_loaded = time.time()
+        self._updated_name = None
+
+    def invalidate(self, name: Optional[str] = None):
+        self._last_loaded = None
+        self._updated_name = name
+
+    async def refresh(self, context: 'Inodes', force=False):
+        expired = self._last_loaded is None or \
+            time.time() - self._last_loaded > FILE_ATTRIBUTE_CACHE_TTL
+        if not force and not self._is_new_file and not expired:
+            return
+        child = await self._get_child_by_name(self.name)
+        if child is None:
+            raise pyfuse3.FUSEError(errno.ENOENT)
+        self._validate(child)
+        self._updated = child
+        self._updated_name = None
+        self._last_loaded = time.time()
 
     @property
     def parent(self) -> Optional[BaseInode]:
@@ -170,34 +197,74 @@ class FolderInode(BaseInode):
 
     @property
     def object(self):
-        return self.folder
+        return self._latest
 
     @property
-    def name(self):
-        return self.folder.name
+    def name(self) -> Optional[str]:
+        return self._updated_name or self._latest.name
 
-    def has_children(self):
-        return True
+    @property
+    def _latest(self):
+        return self._updated or self._original
 
     @property
     def date_created(self) -> Optional[str]:
-        return self.folder.date_created
+        return self._latest.date_created
 
     @property
     def date_modified(self) -> Optional[str]:
-        return self.folder.date_modified
+        return self._latest.date_modified
 
     @property
-    def _path(self):
+    def _path(self) -> str:
         try:
-            return self.folder.osf_path
+            return self._latest.osf_path
         except AttributeError:
-            return self.folder.path
+            return self._latest.path
 
     @property
     def path(self):
         path = self._path if not self._path.startswith('/') else self._path[1:]
         return f'{self.storage.path}{path}'
+
+    def _validate(self, object: Union[File, Folder]):
+        raise NotImplementedError
+
+    @property
+    def _original(self) -> Any:
+        raise NotImplementedError
+
+    @property
+    def _is_new_file(self) -> bool:
+        raise NotImplementedError
+
+    async def _get_child_by_name(self, name: str) -> Optional[Union[File, Folder]]:
+        async for child in self._parent.object.children:
+            log.debug(f'searching({name})... child: {child}, name: {child.name}')
+            if child.name == name:
+                return child
+        return None
+
+
+class FolderInode(BaseFileInode):
+    """The class for managing single folder inode."""
+    def __init__(self, id: int, parent: BaseInode, folder: Folder):
+        super(FolderInode, self).__init__(id, parent)
+        self.folder = folder
+
+    @property
+    def _original(self):
+        return self.folder
+
+    def has_children(self):
+        return True
+
+    @property
+    def _is_new_file(self):
+        return False
+
+    def _validate(self, object: Union[File, Folder]):
+        pass
 
     @property
     def display_path(self):
@@ -215,60 +282,29 @@ class NewFile:
         return f'{self.parent.path}{self.name}'
 
 
-class FileInode(BaseInode):
+class FileInode(BaseFileInode):
     """The class for managing single file inode."""
-    _updated: Optional[File]
-    _last_loaded: float
-
     def __init__(
         self,
         id: int,
         parent: BaseInode,
         file: Union[File, NewFile],
     ):
-        super(FileInode, self).__init__(id)
-        self._parent = parent
+        super(FileInode, self).__init__(id, parent)
         self.file = file
-        self._updated = None
-        self._last_loaded = time.time()
-
-    def invalidate(self):
-        self._last_loaded = None
 
     async def refresh(self, context: 'Inodes', force=False):
-        expired = self._last_loaded is None or \
-            time.time() - self._last_loaded > FILE_ATTRIBUTE_CACHE_TTL
-        if not force and not isinstance(self.file, NewFile) and not expired:
-            return
-        child = await self._get_child_by_name(self.file.name)
-        if child is None:
-            raise pyfuse3.FUSEError(errno.ENOENT)
-        if isinstance(child, Folder):
-            raise pyfuse3.FUSEError(errno.EISDIR)
-        self._updated = child
-        self._last_loaded = time.time()
-        if isinstance(self.file, NewFile):
+        await super(FileInode, self).refresh(context, force=force)
+        if self._is_new_file:
             self.file = self._updated
 
     @property
-    def parent(self) -> Optional[BaseInode]:
-        return self._parent
-
-    @property
-    def storage(self):
-        return self._parent.storage
-
-    @property
-    def object(self):
+    def _original(self):
         return self.file
 
     @property
-    def name(self):
-        return self.file.name
-
-    @property
-    def _latest(self):
-        return self._updated or self.file
+    def _is_new_file(self):
+        return isinstance(self.file, NewFile)
 
     @property
     def size(self) -> Optional[Union[int, str]]:
@@ -280,35 +316,13 @@ class FileInode(BaseInode):
             return None
         return self._latest.size
 
-    @property
-    def date_created(self) -> Optional[str]:
-        return self._latest.date_created
-
-    @property
-    def date_modified(self) -> Optional[str]:
-        return self._latest.date_modified
-
-    @property
-    def _path(self):
-        try:
-            return self.file.osf_path
-        except AttributeError:
-            return self.file.path
-
-    @property
-    def path(self):
-        path = self._path if not self._path.startswith('/') else self._path[1:]
-        return f'{self.storage.path}{path}'
+    def _validate(self, object: Union[File, Folder]):
+        if isinstance(object, Folder):
+            raise pyfuse3.FUSEError(errno.EISDIR)
 
     @property
     def display_path(self):
         return f'{self.parent.display_path}{self.name}'
-
-    async def _get_child_by_name(self, name: str) -> Optional[Union[File, Folder]]:
-        async for child in self._parent.object.children:
-            if child.name == name:
-                return child
-        return None
 
 
 class ChildRelation:
@@ -351,17 +365,17 @@ class Inodes:
         newfile = NewFile(parent_inode, name)
         return self._get_object_inode(parent_inode, newfile)
 
-    def invalidate(self, inode: Union[int, BaseInode]):
+    def invalidate(self, inode: Union[int, BaseInode], name: Optional[str] = None):
         """Invalidate inode.
 
         If inode is integer, it is treated as inode number."""
-        log.debug(f'invalidate: inode={inode}')
+        log.debug(f'invalidate: inode={inode}, name={name}')
         if isinstance(inode, int):
             if inode not in self._inodes:
                 raise ValueError('Unexpected inode: {}'.format(inode))
             inode = self._inodes[inode]
         self._child_relations.delete(inode.id)
-        inode.invalidate()
+        inode.invalidate(name=name)
 
     async def get(self, inode_num: int) -> Optional[BaseInode]:
         """Find inode by inode number."""
@@ -389,6 +403,7 @@ class Inodes:
         children: List[BaseInode] = []
         async for child in self.get_children_of(parent):
             children.append(self._get_object_inode(parent, child))
+            log.debug(f'find_by_name: name={name}, child={child.name}')
             if child.name == name:
                 found = child
         cache = ChildRelation(parent, children)
@@ -399,6 +414,7 @@ class Inodes:
 
     async def get_children_of(self, parent: BaseInode) -> AsyncGenerator[Union[Storage, File, Folder], None]:
         """Get children of the parent inode."""
+        log.debug(f'get_children_of: parent={parent}')
         if not parent.has_children():
             raise pyfuse3.FUSEError(errno.ENOTDIR)
         if isinstance(parent, ProjectInode):
