@@ -1,28 +1,15 @@
 # content of conftest.py
 import pytest, docker, os, time
 
-def pytest_addoption(parser):
-    parser.addoption("--rdm_node_id", action="store", default="rdm_node_id", help="RDM NODE ID")
-    parser.addoption("--rdm_token", action="store", default="rdm_token", help="RDM TOKEN")
-    parser.addoption("--rdm_storage", action="store", default="osfstorage", help="TARGET STORAGE")
+@pytest.fixture
+def rdm_storage():
+    return os.getenv("RDM_STORAGE", "osfstorage")
 
 @pytest.fixture
-def rdm_node_id(request):
-    return request.config.getoption("--rdm_node_id")
-
-@pytest.fixture
-def rdm_token(request):
-    return request.config.getoption("--rdm_token")
-
-@pytest.fixture
-def rdm_storage(request):
-    return request.config.getoption("--rdm_storage")
-
-@pytest.fixture
-def docker_container(request):
+def docker_container():
     # 引数からパラメータを取得
-    rdm_node_id = request.config.getoption("--rdm_node_id")
-    rdm_token = request.config.getoption("--rdm_token")
+    rdm_node_id = os.getenv("RDM_NODE_ID", "rdm_node_id")
+    rdm_token = os.getenv("RDM_TOKEN", "rdm_token")
 
     # Dockerクライアントを作成
     client = docker.from_env()

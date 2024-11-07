@@ -33,4 +33,4 @@ jobs:
           RDM_TOKEN: ${{ secrets.RDM_TOKEN }}
           RDM_STORAGE: ${{ secrets.RDM_STORAGE }}
         run: |
-          pytest --cov --rdm_node_id=${RDM_NODE_ID} --rdm_token=${RDM_TOKEN} --rdm_storage=${RDM_STORAGE}
+          pytest --cov
