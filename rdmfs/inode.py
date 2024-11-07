@@ -22,12 +22,6 @@ def fromisoformat(datestr):
     return int(datetime.fromisoformat(datestr).timestamp() * 1e9)
 
 
-class DummyFile:
-    def __init__(self, name):
-        self.name = name
-        self.size = 0
-
-
 class BaseInode:
     """The class for managing single inode."""
     def __init__(self, id: int):
@@ -284,6 +278,8 @@ class NewFile:
 
 class FileInode(BaseFileInode):
     """The class for managing single file inode."""
+    _invalidated: bool
+
     def __init__(
         self,
         id: int,
@@ -292,8 +288,16 @@ class FileInode(BaseFileInode):
     ):
         super(FileInode, self).__init__(id, parent)
         self.file = file
+        self._invalidated = False
+
+    def invalidate(self, name: Optional[str] = None):
+        super(FileInode, self).invalidate(name=name)
+        self._invalidated = True
 
     async def refresh(self, context: 'Inodes', force=False):
+        if self._is_new_file and not self._invalidated:
+            # New file and not invalidated(=not written) -> no need to refresh
+            return
         await super(FileInode, self).refresh(context, force=force)
         if self._is_new_file:
             self.file = self._updated
@@ -305,6 +309,30 @@ class FileInode(BaseFileInode):
     @property
     def _is_new_file(self):
         return isinstance(self.file, NewFile)
+
+    @property
+    def name(self):
+        if self._is_new_file:
+            return self.file.name
+        return super(FileInode, self).name
+
+    @property
+    def path(self):
+        if self._is_new_file:
+            return self.file.path
+        return super(FileInode, self).path
+
+    @property
+    def date_created(self):
+        if self._is_new_file:
+            return None
+        return super(FileInode, self).date_created
+
+    @property
+    def date_modified(self):
+        if self._is_new_file:
+            return None
+        return super(FileInode, self).date_modified
 
     @property
     def size(self) -> Optional[Union[int, str]]:
@@ -408,9 +436,10 @@ class Inodes:
                 found = child
         cache = ChildRelation(parent, children)
         self._child_relations.set(parent.id, cache)
-        if found is None:
-            return None
-        return self._get_object_inode(parent, found)
+        if found is not None:
+            return self._get_object_inode(parent, found)
+        # Find from new files
+        return self._find_new_file_by_name(parent, name)
 
     async def get_children_of(self, parent: BaseInode) -> AsyncGenerator[Union[Storage, File, Folder], None]:
         """Get children of the parent inode."""
@@ -450,3 +479,14 @@ class Inodes:
         if isinstance(object, Folder):
             return FolderInode(inode_num, parent, object)
         return FileInode(inode_num, parent, object)
+
+    def _find_new_file_by_name(self, parent: BaseInode, name: str) -> Optional[BaseInode]:
+        """Find new file by name."""
+        for inode in self._inodes.values():
+            if not isinstance(inode, FileInode):
+                continue
+            if inode.parent != parent:
+                continue
+            if inode._is_new_file and inode.name == name:
+                return inode
+        return None
